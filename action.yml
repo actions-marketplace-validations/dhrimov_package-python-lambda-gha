@@ -1,0 +1,134 @@
+name: Package Python Lambda
+description: Package a Python AWS Lambda project into a reproducible deployment zip with uv and package-python-function.
+author: dhrimov
+
+branding:
+  icon: package
+  color: blue
+
+inputs:
+  input-path:
+    description: Directory containing the Lambda project's pyproject.toml.
+    default: "."
+  output-path:
+    description: Directory the deployment zip is written to. Created if missing.
+    default: terraform
+  python-version:
+    # GitHub does not enforce `required` on composite inputs, so this line is
+    # documentation only - build.sh does the real check. Do not add a default:
+    # it would quietly pick the runtime every compiled dependency is built
+    # against, and that is the drift this action exists to catch.
+    description: Target AWS Lambda Python runtime version, one of 3.11, 3.12, 3.13, 3.14.
+    required: true
+  platform:
+    # Same reason as python-version: no default, on purpose.
+    description: uv target platform, either aarch64-manylinux2014 or x86_64-manylinux2014.
+    required: true
+  packager-version:
+    description: >-
+      package-python-function version to package with. A floor as well as a
+      default: earlier releases have no --report flag.
+    default: 1.0.0
+  uv-version:
+    description: >-
+      uv version to install. Empty means the version pinned in the project,
+      or the latest release.
+    default: ""
+  enable-cache:
+    description: Turn on uv's GitHub Actions cache, keyed off <input-path>/uv.lock.
+    default: "true"
+  fail-on-non-linux:
+    description: >-
+      Refuse to run on a non-Linux runner. Linux runners are the only ones
+      this action is tested on.
+    default: "true"
+  upload-artifact:
+    description: Upload the zip as a workflow artifact. Off by default.
+    default: "false"
+  artifact-name:
+    # A composite `default:` can only be a fixed string, so the derived default
+    # is worked out in a step below instead of here.
+    description: >-
+      Artifact name. Defaults to <distribution-name>-<platform>-py<python-version>,
+      which is unique per matrix job - upload-artifact errors on name collisions.
+    default: ""
+  artifact-retention-days:
+    description: Days to keep the uploaded artifact.
+    default: "7"
+
+outputs:
+  zip-path:
+    description: Absolute path to the deployment zip on the runner's filesystem.
+    value: ${{ steps.package.outputs.zip-path }}
+  zip-sha256:
+    description: SHA-256 of the deployment zip, the same across runs with the same inputs.
+    value: ${{ steps.package.outputs.zip-sha256 }}
+  package-size-bytes:
+    description: Size of the zip on disk, in bytes.
+    value: ${{ steps.package.outputs.package-size-bytes }}
+  uncompressed-bytes:
+    description: >-
+      Unzipped size in bytes - the figure AWS's 250 MiB deployment package
+      limit applies to.
+    value: ${{ steps.package.outputs.uncompressed-bytes }}
+  nested-zip:
+    description: Whether the packager's >250 MiB nested-zip fallback kicked in.
+    value: ${{ steps.package.outputs.nested-zip }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      with:
+        version: ${{ inputs.uv-version }}
+        enable-cache: ${{ inputs.enable-cache }}
+        # Without a glob pointed at the project's own lock file, setup-uv warns
+        # that the cache "will never get invalidated" and then does nothing.
+        cache-dependency-glob: ${{ inputs.input-path }}/uv.lock
+
+    - name: Package
+      id: package
+      shell: bash
+      run: |
+        "$GITHUB_ACTION_PATH/build.sh" \
+          --input "$INPUT_PATH" \
+          --output "$OUTPUT_PATH" \
+          --python "$PYTHON_VERSION" \
+          --platform "$PLATFORM" \
+          --packager-version "$PACKAGER_VERSION" \
+          --fail-on-non-linux "$FAIL_ON_NON_LINUX"
+      env:
+        INPUT_PATH: ${{ inputs.input-path }}
+        OUTPUT_PATH: ${{ inputs.output-path }}
+        PYTHON_VERSION: ${{ inputs.python-version }}
+        PLATFORM: ${{ inputs.platform }}
+        PACKAGER_VERSION: ${{ inputs.packager-version }}
+        FAIL_ON_NON_LINUX: ${{ inputs.fail-on-non-linux }}
+
+    - name: Resolve artifact name
+      id: artifact
+      if: ${{ inputs.upload-artifact == 'true' }}
+      shell: bash
+      run: |
+        # The derived name takes distribution-name from the packager's own
+        # report, so it matches the zip's filename without keeping a second
+        # copy of the PyPA escaping rule here.
+        if [[ -z "$ARTIFACT_NAME" ]]; then
+          ARTIFACT_NAME="$DISTRIBUTION_NAME-$PLATFORM-py$PYTHON_VERSION"
+        fi
+        echo "name=$ARTIFACT_NAME" >>"$GITHUB_OUTPUT"
+      env:
+        ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        DISTRIBUTION_NAME: ${{ steps.package.outputs.distribution-name }}
+        PLATFORM: ${{ inputs.platform }}
+        PYTHON_VERSION: ${{ inputs.python-version }}
+
+    - name: Upload artifact
+      if: ${{ inputs.upload-artifact == 'true' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: ${{ steps.package.outputs.zip-path }}
+        retention-days: ${{ inputs.artifact-retention-days }}
+        if-no-files-found: error

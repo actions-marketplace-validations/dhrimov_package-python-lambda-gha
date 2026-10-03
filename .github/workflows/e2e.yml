@@ -1,0 +1,249 @@
+name: E2E
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # AWS Lambda's unzipped deployment package limit, in bytes.
+  AWS_LAMBDA_MAX_UNZIP_SIZE: 262144000
+
+jobs:
+  single:
+    name: single (python ${{ matrix.python-version }}, ${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        platform: [aarch64-manylinux2014, x86_64-manylinux2014]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Package the single-lambda fixture
+        id: package
+        uses: ./
+        with:
+          input-path: tests/fixtures/single
+          output-path: dist
+          python-version: ${{ matrix.python-version }}
+          platform: ${{ matrix.platform }}
+
+      # This asserts on the path the action reports, not on one rebuilt here.
+      # A test that works out the filename itself would pass even if the action
+      # reported the wrong one.
+      - name: Assert the reported zip exists at an absolute path
+        env:
+          ZIP_PATH: ${{ steps.package.outputs.zip-path }}
+        run: |
+          [[ "$ZIP_PATH" == /* ]] || { echo "zip-path is not absolute: $ZIP_PATH"; exit 1; }
+          test -f "$ZIP_PATH"
+
+      # The assertion that makes both matrix axes mean something. It reacts to
+      # platform and python-version at once, and it is what would catch a
+      # regression that dropped --python-platform from the uv pip install line.
+      # Without that flag, both platforms would resolve the same py3-none-any
+      # wheels and pass.
+      - name: Assert the extension module's ABI tag matches the request
+        env:
+          ZIP_PATH: ${{ steps.package.outputs.zip-path }}
+          PLATFORM: ${{ matrix.platform }}
+          PYTHON_VERSION: ${{ matrix.python-version }}
+        run: |
+          architecture="${PLATFORM%%-*}"
+          expected="orjson/orjson.cpython-${PYTHON_VERSION//./}-$architecture-linux-gnu.so"
+          if ! unzip -l "$ZIP_PATH" | grep -qF "$expected"; then
+            echo "expected $expected in the package, got:"
+            unzip -l "$ZIP_PATH"
+            exit 1
+          fi
+
+      # The cheap half of the nested-zip assertion. Proving the `true` side
+      # needs a >250 MiB fixture, which costs too much to keep in CI for now.
+      - name: Assert the fixture stays under AWS's unzipped limit
+        env:
+          NESTED_ZIP: ${{ steps.package.outputs.nested-zip }}
+          UNCOMPRESSED_BYTES: ${{ steps.package.outputs.uncompressed-bytes }}
+        run: |
+          [[ "$NESTED_ZIP" == "false" ]] || { echo "nested-zip fallback kicked in unexpectedly"; exit 1; }
+          ((UNCOMPRESSED_BYTES < AWS_LAMBDA_MAX_UNZIP_SIZE))
+
+  multi:
+    # One job, not a third matrix axis. This covers the caller-driven matrix
+    # pattern, not the packaging pipeline, so running it across every Python
+    # and platform would add cost without telling us anything new.
+    name: multi (caller-driven, one call per lambda)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Package the orders lambda
+        id: orders
+        uses: ./
+        with:
+          input-path: tests/fixtures/multi/orders
+          output-path: dist
+          python-version: "3.13"
+          platform: aarch64-manylinux2014
+
+      - name: Package the payments lambda
+        id: payments
+        uses: ./
+        with:
+          input-path: tests/fixtures/multi/payments
+          output-path: dist
+          python-version: "3.13"
+          platform: aarch64-manylinux2014
+
+      # Both steps share one output-path on purpose. It is what would catch two
+      # fixture projects sharing a name by accident: the packager takes the
+      # zip's filename from that name, so the second would overwrite the
+      # first.
+      - name: Assert both lambdas survive a shared output path
+        env:
+          ORDERS_ZIP: ${{ steps.orders.outputs.zip-path }}
+          PAYMENTS_ZIP: ${{ steps.payments.outputs.zip-path }}
+        run: |
+          [[ "$ORDERS_ZIP" != "$PAYMENTS_ZIP" ]] || { echo "both lambdas packaged to $ORDERS_ZIP"; exit 1; }
+          test -f "$ORDERS_ZIP"
+          test -f "$PAYMENTS_ZIP"
+
+  reproducible:
+    name: the same inputs give the same hash
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Package once
+        id: first
+        uses: ./
+        with:
+          input-path: tests/fixtures/single
+          output-path: dist
+          python-version: "3.13"
+          platform: aarch64-manylinux2014
+
+      - name: Package again
+        id: second
+        uses: ./
+        with:
+          input-path: tests/fixtures/single
+          output-path: dist
+          python-version: "3.13"
+          platform: aarch64-manylinux2014
+
+      - name: Assert both runs report the same hash
+        env:
+          FIRST: ${{ steps.first.outputs.zip-sha256 }}
+          SECOND: ${{ steps.second.outputs.zip-sha256 }}
+        run: |
+          echo "first:  $FIRST"
+          echo "second: $SECOND"
+          [[ -n "$FIRST" && "$FIRST" == "$SECOND" ]]
+
+  guard-rails:
+    name: unsupported inputs fail fast
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Package for an unsupported platform
+        id: bad-platform
+        continue-on-error: true
+        uses: ./
+        with:
+          input-path: tests/fixtures/single
+          output-path: dist
+          python-version: "3.13"
+          platform: aarch64-manylinux_2_28
+
+      - name: Package for an unsupported runtime
+        id: bad-python
+        continue-on-error: true
+        uses: ./
+        with:
+          input-path: tests/fixtures/single
+          output-path: dist
+          python-version: "3.9"
+          platform: aarch64-manylinux2014
+
+      - name: Assert both were rejected without producing a package
+        env:
+          BAD_PLATFORM: ${{ steps.bad-platform.outcome }}
+          BAD_PYTHON: ${{ steps.bad-python.outcome }}
+        run: |
+          [[ "$BAD_PLATFORM" == "failure" ]] || { echo "an unsupported platform was accepted"; exit 1; }
+          [[ "$BAD_PYTHON" == "failure" ]] || { echo "an unsupported python-version was accepted"; exit 1; }
+          test ! -e dist
+
+  artifact:
+    # Two jobs that differ only by platform. upload-artifact errors on
+    # same-name collisions, so this job passing is what proves the derived
+    # default is unique per platform and not just per project.
+    name: upload (${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [aarch64-manylinux2014, x86_64-manylinux2014]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Package and upload
+        uses: ./
+        with:
+          input-path: tests/fixtures/single
+          output-path: dist
+          python-version: "3.13"
+          platform: ${{ matrix.platform }}
+          upload-artifact: "true"
+          artifact-retention-days: "1"
+
+  artifact-default:
+    # A different python-version from the upload job on purpose. A stray
+    # artifact from here would then carry a name the assertion below does not
+    # expect, instead of colliding with one it does.
+    name: upload is off by default
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Package with upload-artifact left at its default
+        uses: ./
+        with:
+          input-path: tests/fixtures/single
+          output-path: dist
+          python-version: "3.12"
+          platform: aarch64-manylinux2014
+
+  artifact-assert:
+    name: artifacts download and have distinct names
+    runs-on: ubuntu-latest
+    needs: [artifact, artifact-default]
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Download every artifact this run produced
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: downloaded
+
+      - name: Assert exactly the two derived names, each holding its zip
+        run: |
+          expected="$(printf '%s\n' \
+            single_lambda-aarch64-manylinux2014-py3.13 \
+            single_lambda-x86_64-manylinux2014-py3.13)"
+          actual="$(ls downloaded)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "expected artifacts:"; echo "$expected"
+            echo "actual artifacts:"; echo "$actual"
+            exit 1
+          fi
+          test -f "downloaded/single_lambda-aarch64-manylinux2014-py3.13/single_lambda.zip"
+          test -f "downloaded/single_lambda-x86_64-manylinux2014-py3.13/single_lambda.zip"

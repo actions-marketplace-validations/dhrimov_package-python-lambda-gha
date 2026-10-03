@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    name: shellcheck + bats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: shellcheck
+        # Comes preinstalled on the GitHub-hosted Ubuntu images.
+        run: shellcheck build.sh
+
+      - name: Install bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes bats
+
+      - name: bats
+        run: bats tests/build.bats

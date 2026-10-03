@@ -1,0 +1,16 @@
+version: 2
+
+updates:
+  # Keeps this action's own SHA pins current - both the ones in action.yml and
+  # the ones in .github/workflows. Dependabot rewrites the SHA and the trailing
+  # "# vX.Y.Z" comment together, which is why the pins are written that way.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)
+
+  # The fixtures pin orjson exactly, on purpose: the E2E matrix asserts the
+  # exact name of the extension module it ships. Bumping it is a hand edit, not
+  # a Dependabot PR, so there is no pip ecosystem entry here.

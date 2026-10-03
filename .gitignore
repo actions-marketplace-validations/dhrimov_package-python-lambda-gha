@@ -1,0 +1,10 @@
+# build.sh scratch space and packaging output
+build/
+dist/
+terraform/
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/

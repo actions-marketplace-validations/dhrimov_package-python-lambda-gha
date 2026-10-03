@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: publish ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Only vX.Y.Z tags ever get a Release, which is why this workflow's
+      # trigger has two dots in it. Immutable releases stop the tag of a
+      # published release from being moved or deleted, and v1 works as a
+      # floating alias only because it is a bare tag with no Release on it.
+      # Publish one on v1 and the alias freezes there, then every later run of
+      # the step below starts failing - months later, far from the cause.
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+
+      - name: Move the floating v1 tag to this commit
+        uses: haya14busa/action-update-semver@7d2c558640ea49e798d46539536190aff8c18715 # v1.5.1
+        with:
+          github_token: ${{ github.token }}
+          # Major only: v1 is the alias this action's README points callers
+          # at, and a v1.2 tag would be one more thing to keep track of for no
+          # gain.
+          major_version_tag_only: "true"
