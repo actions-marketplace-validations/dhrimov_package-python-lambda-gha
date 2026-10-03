@@ -15,6 +15,16 @@ jobs:
     name: move v1 to ${{ github.ref_name }}
     runs-on: ubuntu-latest
     steps:
+      # The release trigger has no tag filter, and action-update-semver finds
+      # the tag to move by cutting the last two dot-separated parts off the
+      # release tag. Without this check, a release on foo.bar.baz would
+      # force-move foo, and one on v2.0.0-rc1 would move v2.
+      - name: Check the release tag is vX.Y.Z
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "release tag is not vX.Y.Z: $TAG"; exit 1; }
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Only publish Releases on vX.Y.Z tags. Immutable releases stop the tag
