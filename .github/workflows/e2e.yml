@@ -63,8 +63,8 @@ jobs:
             exit 1
           fi
 
-      # The cheap half of the nested-zip assertion. Proving the `true` side
-      # needs a >250 MiB fixture, which costs too much to keep in CI for now.
+      # The `false` half of the nested-zip assertion. The `true` half is the
+      # nested job below.
       - name: Assert the fixture stays under AWS's unzipped limit
         env:
           NESTED_ZIP: ${{ steps.package.outputs.nested-zip }}
@@ -72,6 +72,59 @@ jobs:
         run: |
           [[ "$NESTED_ZIP" == "false" ]] || { echo "nested-zip fallback kicked in unexpectedly"; exit 1; }
           ((UNCOMPRESSED_BYTES < AWS_LAMBDA_MAX_UNZIP_SIZE))
+
+  nested:
+    # Python 3.13 only: the large fixture's dependencies ship no cp314
+    # manylinux2014 wheels, and 3.13 is enough to prove the fallback. Both
+    # platforms, because each resolves its own wheels and its own sizes.
+    name: nested zip (python 3.13, ${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [aarch64-manylinux2014, x86_64-manylinux2014]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Package the over-the-limit fixture
+        id: package
+        uses: ./
+        with:
+          input-path: tests/fixtures/large
+          output-path: dist
+          python-version: "3.13"
+          platform: ${{ matrix.platform }}
+
+      # uncompressed-bytes is the size before nesting, so it has to be over the
+      # limit for the fallback to mean anything. The outer zip holds the inner
+      # one stored, not compressed, so its size on disk is close to the
+      # unzipped size AWS measures, and that is what has to fit.
+      - name: Assert the nested-zip fallback kicked in
+        env:
+          NESTED_ZIP: ${{ steps.package.outputs.nested-zip }}
+          UNCOMPRESSED_BYTES: ${{ steps.package.outputs.uncompressed-bytes }}
+          PACKAGE_SIZE_BYTES: ${{ steps.package.outputs.package-size-bytes }}
+        run: |
+          [[ "$NESTED_ZIP" == "true" ]] || { echo "nested-zip fallback did not kick in"; exit 1; }
+          ((UNCOMPRESSED_BYTES > AWS_LAMBDA_MAX_UNZIP_SIZE)) ||
+            { echo "fixture is not over the unzipped limit: $UNCOMPRESSED_BYTES bytes"; exit 1; }
+          ((PACKAGE_SIZE_BYTES < AWS_LAMBDA_MAX_UNZIP_SIZE)) ||
+            { echo "nested zip is not under the limit: $PACKAGE_SIZE_BYTES bytes"; exit 1; }
+
+      # The layout the loader depends on: the inner zip and an __init__.py that
+      # extracts it, both in the entrypoint package, which the packager names
+      # after the distribution.
+      - name: Assert the zip holds only the inner zip and its loader
+        env:
+          ZIP_PATH: ${{ steps.package.outputs.zip-path }}
+        run: |
+          expected="$(printf '%s\n' large_lambda/.dependencies.zip large_lambda/__init__.py)"
+          actual="$(unzip -Z1 "$ZIP_PATH" | LC_ALL=C sort)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "expected entries:"; echo "$expected"
+            echo "actual entries:"; echo "$actual"
+            exit 1
+          fi
 
   multi:
     # One job, not a third matrix axis. This covers the caller-driven matrix
