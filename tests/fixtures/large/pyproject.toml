@@ -1,0 +1,27 @@
+[project]
+name = "large-lambda"
+version = "0.1.0"
+description = "Over-the-limit fixture for the action's nested-zip end-to-end test."
+requires-python = ">=3.11"
+dependencies = [
+    # Real, heavy dependencies on purpose: together they take the package over
+    # AWS's 250 MiB unzipped limit (320-345 MiB, by platform) while it stays
+    # well under it zipped (about 100 MiB), which is the only case where the
+    # packager's nested-zip fallback kicks in. These are the last releases
+    # with cp313 manylinux2014 wheels for both platforms.
+    #
+    # numpy is pinned too, though nothing here imports it directly. uv lock
+    # does not know the target platform, so left to itself it picks a numpy
+    # that only ships manylinux_2_28 wheels.
+    "numpy==2.2.6",
+    "pandas==2.3.2",
+    "pyarrow==20.0.0",
+    "scipy==1.16.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/large_lambda"]

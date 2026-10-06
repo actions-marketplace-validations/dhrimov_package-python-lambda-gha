@@ -11,6 +11,8 @@ updates:
     commit-message:
       prefix: chore(deps)
 
-  # The fixtures pin orjson exactly, on purpose: the E2E matrix asserts the
-  # exact name of the extension module it ships. Bumping it is a hand edit, not
-  # a Dependabot PR, so there is no pip ecosystem entry here.
+  # The fixtures pin their dependencies exactly, on purpose: the E2E matrix
+  # asserts the exact name of the extension module orjson ships, and the large
+  # fixture's pins are what keep it over AWS's 250 MiB unzipped limit. Bumping
+  # either is a hand edit, not a Dependabot PR, so there is no pip ecosystem
+  # entry here.

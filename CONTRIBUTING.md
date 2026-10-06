@@ -66,9 +66,10 @@ keep.
 ## The end-to-end suite
 
 `.github/workflows/e2e.yml` runs the action against the fixtures in `tests/`:
-four Python versions across both platforms, plus the multi-lambda pattern, hash
-stability, the guard rails, and artifact naming. It is the only suite that
-proves the action works, and it costs a lot more than `ci.yml`.
+four Python versions across both platforms, plus the nested-zip fallback, the
+multi-lambda pattern, hash stability, the guard rails, and artifact naming. It
+is the only suite that proves the action works, and it costs a lot more than
+`ci.yml`.
 
 Workflows on a pull request from a fork wait for a maintainer to approve the
 run. That is GitHub's setting for outside contributors, not something your PR
@@ -80,6 +81,13 @@ the exact filename of the compiled extension module it ships
 dependency, both platforms would resolve the same `py3-none-any` wheels and the
 matrix would prove nothing. Bumping that pin means updating the assertion with
 it, so it is a hand edit rather than a Dependabot PR.
+
+The `large` fixture is what proves the nested-zip fallback. It pins `numpy`,
+`pandas`, `pyarrow` and `scipy` exactly, which takes the package over AWS's
+250 MiB unzipped limit while it stays well under it zipped - the only case
+where the fallback kicks in. A bump has to keep both sides of that true, so it
+is a hand edit too. It runs on Python 3.13 only: these packages ship no cp314
+`manylinux2014` wheels.
 
 ## Adding a Python runtime
 
@@ -109,7 +117,5 @@ Already known, so there is no need to file them - a PR is welcome:
 
 - `--build-dir` exists in `build.sh` but the action does not expose it, so a
   project with its own `build/` directory has no way to opt out.
-- The nested-zip fallback is only tested on the side where it does not trigger.
-  Proving the other side needs a fixture over 250 MiB.
 - Only the `manylinux2014` targets are mapped. `manylinux_2_28` is a real uv
   target, it just has no Lambda architecture mapping here yet.
