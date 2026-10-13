@@ -22,8 +22,32 @@ setup() {
   [ "$output" = "x86_64" ]
 }
 
-@test "platform_architecture rejects a manylinux variant we do not support" {
+@test "platform_architecture maps the arm64 manylinux_2_28 platform" {
   run platform_architecture aarch64-manylinux_2_28
+  [ "$status" -eq 0 ]
+  [ "$output" = "arm64" ]
+}
+
+@test "platform_architecture maps the x86_64 manylinux_2_28 platform" {
+  run platform_architecture x86_64-manylinux_2_28
+  [ "$status" -eq 0 ]
+  [ "$output" = "x86_64" ]
+}
+
+@test "platform_architecture maps the arm64 manylinux_2_34 platform" {
+  run platform_architecture aarch64-manylinux_2_34
+  [ "$status" -eq 0 ]
+  [ "$output" = "arm64" ]
+}
+
+@test "platform_architecture maps the x86_64 manylinux_2_34 platform" {
+  run platform_architecture x86_64-manylinux_2_34
+  [ "$status" -eq 0 ]
+  [ "$output" = "x86_64" ]
+}
+
+@test "platform_architecture rejects a manylinux variant we do not support" {
+  run platform_architecture aarch64-manylinux_2_31
   [ "$status" -ne 0 ]
 }
 
@@ -35,6 +59,25 @@ setup() {
 @test "platform_architecture rejects an empty platform" {
   run platform_architecture ""
   [ "$status" -ne 0 ]
+}
+
+# --- platform_supports_python ---
+
+@test "platform_supports_python rejects 3.11 with every newer-glibc platform" {
+  for platform in aarch64-manylinux_2_28 x86_64-manylinux_2_28 aarch64-manylinux_2_34 x86_64-manylinux_2_34; do
+    run platform_supports_python "$platform" 3.11
+    [ "$status" -ne 0 ]
+  done
+}
+
+@test "platform_supports_python accepts 3.12 with a newer-glibc platform" {
+  run platform_supports_python aarch64-manylinux_2_34 3.12
+  [ "$status" -eq 0 ]
+}
+
+@test "platform_supports_python accepts 3.11 with manylinux2014" {
+  run platform_supports_python aarch64-manylinux2014 3.11
+  [ "$status" -eq 0 ]
 }
 
 # --- python_version_runtime ---

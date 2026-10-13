@@ -22,7 +22,11 @@ inputs:
     required: true
   platform:
     # Same reason as python-version: no default, on purpose.
-    description: uv target platform, either aarch64-manylinux2014 or x86_64-manylinux2014.
+    description: >-
+      uv target platform, one of aarch64-manylinux2014, x86_64-manylinux2014,
+      aarch64-manylinux_2_28, x86_64-manylinux_2_28, aarch64-manylinux_2_34,
+      x86_64-manylinux_2_34. The manylinux_2_28 and manylinux_2_34 ones need
+      python-version 3.12 or later.
     required: true
   packager-version:
     description: >-
@@ -126,7 +130,7 @@ runs:
 
     - name: Upload artifact
       if: ${{ inputs.upload-artifact == 'true' }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ steps.artifact.outputs.name }}
         path: ${{ steps.package.outputs.zip-path }}

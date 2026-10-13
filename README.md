@@ -91,7 +91,7 @@ own `actions/checkout` step. `upload-artifact: true` needs nothing extra.
 | `input-path` | `.` | Directory containing the Lambda project's `pyproject.toml`. |
 | `output-path` | `terraform` | Directory the zip is written to. Created if missing. |
 | `python-version` | **none - required** | Target AWS Lambda Python runtime: `3.11`, `3.12`, `3.13`, or `3.14`. |
-| `platform` | **none - required** | uv target platform: `aarch64-manylinux2014` or `x86_64-manylinux2014`. |
+| `platform` | **none - required** | uv target platform: `aarch64-manylinux2014`, `x86_64-manylinux2014`, `aarch64-manylinux_2_28`, `x86_64-manylinux_2_28`, `aarch64-manylinux_2_34`, or `x86_64-manylinux_2_34`. See [`platform` and the Lambda runtime](#platform-and-the-lambda-runtime). |
 | `packager-version` | `1.0.0` | `package-python-function` version to package with. |
 | `uv-version` | `""` | uv version to install. Empty means the version pinned in your project, or the latest release. |
 | `enable-cache` | `true` | Turn on uv's Actions cache, keyed off `<input-path>/uv.lock`. |
@@ -123,10 +123,18 @@ GitHub does not enforce `required: true` on composite action inputs, so the
 action checks them itself and fails with an `::error::` before installing
 anything.
 
+### `platform` and the Lambda runtime
+
 The `platform` you pass here has to match the `architecture` set on the Lambda
-resource itself (`arm64` for `aarch64-manylinux2014`, `x86_64` for
-`x86_64-manylinux2014`). The action never sees that resource, so keeping the
-two in alignment is your job.
+resource itself: `arm64` for any `aarch64-*` platform, `x86_64` for any
+`x86_64-*` one. The action never sees that resource, so keeping the two in
+alignment is your job.
+
+The `manylinux_2_28` and `manylinux_2_34` platforms need `python-version`
+`3.12` or later. The `python3.11` runtime runs on Amazon Linux 2, whose glibc
+2.26 cannot load wheels built for those levels, so the action fails that pair
+before installing anything. `python3.12` and later run on Amazon Linux 2023,
+glibc 2.34, which loads all three levels.
 
 ### Supported runtimes
 
