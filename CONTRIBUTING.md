@@ -66,7 +66,9 @@ keep.
 ## The end-to-end suite
 
 `.github/workflows/e2e.yml` runs the action against the fixtures in `tests/`:
-four Python versions across both platforms, plus the nested-zip fallback, the
+four Python versions across both `manylinux2014` platforms, the four
+`manylinux_2_28` and `manylinux_2_34` platforms on Python 3.13, plus the
+nested-zip fallback, the
 multi-lambda pattern, hash stability, the guard rails, and artifact naming. It
 is the only suite that proves the action works, and it costs a lot more than
 `ci.yml`.
@@ -105,6 +107,20 @@ A newly deprecated runtime also needs a date in
 `python_version_deprecation_date`, which is what turns its build-time
 `::warning::` on. Those dates are hand-written too, from AWS docs.
 
+## Adding a platform
+
+The platform list lives in more than one place too. All of these need the
+edit:
+
+- `platform_architecture` in `build.sh`, and `platform_supports_python` if
+  the platform's glibc level is newer than some supported runtime can load
+- `usage()` and the unsupported-platform `fail` message in `build.sh`
+- the `platform` description in `action.yml`
+- the inputs table and the "`platform` and the Lambda runtime" section in
+  `README.md`
+- the `newer-glibc` matrix in `.github/workflows/e2e.yml`
+- `tests/build.bats`
+
 ## House rules
 
 - Pin every action to a full commit SHA with a trailing `# vX.Y.Z` comment.
@@ -117,5 +133,3 @@ Already known, so there is no need to file them - a PR is welcome:
 
 - `--build-dir` exists in `build.sh` but the action does not expose it, so a
   project with its own `build/` directory has no way to opt out.
-- Only the `manylinux2014` targets are mapped. `manylinux_2_28` is a real uv
-  target, it just has no Lambda architecture mapping here yet.

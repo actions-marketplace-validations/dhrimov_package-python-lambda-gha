@@ -73,6 +73,63 @@ jobs:
           [[ "$NESTED_ZIP" == "false" ]] || { echo "nested-zip fallback kicked in unexpectedly"; exit 1; }
           ((UNCOMPRESSED_BYTES < AWS_LAMBDA_MAX_UNZIP_SIZE))
 
+  newer-glibc:
+    # Its own job, not more values on single's platform axis: the glibc level
+    # does not interact with python-version, so one version is enough. 3.13,
+    # because 3.11 rejects these platforms. orjson ships manylinux2014 wheels,
+    # which these targets install too, so this proves uv takes the target and
+    # resolves the right architecture - not that a manylinux_2_28-only wheel
+    # gets picked up.
+    name: newer glibc (python 3.13, ${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - aarch64-manylinux_2_28
+          - x86_64-manylinux_2_28
+          - aarch64-manylinux_2_34
+          - x86_64-manylinux_2_34
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Package the single-lambda fixture
+        id: package
+        uses: ./
+        with:
+          input-path: tests/fixtures/single
+          output-path: dist
+          python-version: "3.13"
+          platform: ${{ matrix.platform }}
+
+      - name: Assert the reported zip exists at an absolute path
+        env:
+          ZIP_PATH: ${{ steps.package.outputs.zip-path }}
+        run: |
+          [[ "$ZIP_PATH" == /* ]] || { echo "zip-path is not absolute: $ZIP_PATH"; exit 1; }
+          test -f "$ZIP_PATH"
+
+      - name: Assert the extension module's ABI tag matches the request
+        env:
+          ZIP_PATH: ${{ steps.package.outputs.zip-path }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          architecture="${PLATFORM%%-*}"
+          expected="orjson/orjson.cpython-313-$architecture-linux-gnu.so"
+          if ! unzip -l "$ZIP_PATH" | grep -qF "$expected"; then
+            echo "expected $expected in the package, got:"
+            unzip -l "$ZIP_PATH"
+            exit 1
+          fi
+
+      - name: Assert the fixture stays under AWS's unzipped limit
+        env:
+          NESTED_ZIP: ${{ steps.package.outputs.nested-zip }}
+          UNCOMPRESSED_BYTES: ${{ steps.package.outputs.uncompressed-bytes }}
+        run: |
+          [[ "$NESTED_ZIP" == "false" ]] || { echo "nested-zip fallback kicked in unexpectedly"; exit 1; }
+          ((UNCOMPRESSED_BYTES < AWS_LAMBDA_MAX_UNZIP_SIZE))
+
   nested:
     # Python 3.13 only: the large fixture's dependencies ship no cp314
     # manylinux2014 wheels, and 3.13 is enough to prove the fallback. Both
@@ -213,6 +270,16 @@ jobs:
           input-path: tests/fixtures/single
           output-path: dist
           python-version: "3.13"
+          platform: aarch64-manylinux_2_31
+
+      - name: Package for a runtime too old for the platform's glibc
+        id: bad-pair
+        continue-on-error: true
+        uses: ./
+        with:
+          input-path: tests/fixtures/single
+          output-path: dist
+          python-version: "3.11"
           platform: aarch64-manylinux_2_28
 
       - name: Package for an unsupported runtime
@@ -225,12 +292,14 @@ jobs:
           python-version: "3.9"
           platform: aarch64-manylinux2014
 
-      - name: Assert both were rejected without producing a package
+      - name: Assert all three were rejected without producing a package
         env:
           BAD_PLATFORM: ${{ steps.bad-platform.outcome }}
+          BAD_PAIR: ${{ steps.bad-pair.outcome }}
           BAD_PYTHON: ${{ steps.bad-python.outcome }}
         run: |
           [[ "$BAD_PLATFORM" == "failure" ]] || { echo "an unsupported platform was accepted"; exit 1; }
+          [[ "$BAD_PAIR" == "failure" ]] || { echo "python 3.11 with manylinux_2_28 was accepted"; exit 1; }
           [[ "$BAD_PYTHON" == "failure" ]] || { echo "an unsupported python-version was accepted"; exit 1; }
           test ! -e dist
 

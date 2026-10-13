@@ -22,7 +22,11 @@ inputs:
     required: true
   platform:
     # Same reason as python-version: no default, on purpose.
-    description: uv target platform, either aarch64-manylinux2014 or x86_64-manylinux2014.
+    description: >-
+      uv target platform, one of aarch64-manylinux2014, x86_64-manylinux2014,
+      aarch64-manylinux_2_28, x86_64-manylinux_2_28, aarch64-manylinux_2_34,
+      x86_64-manylinux_2_34. The manylinux_2_28 and manylinux_2_34 ones need
+      python-version 3.12 or later.
     required: true
   packager-version:
     description: >-

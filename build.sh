@@ -42,9 +42,21 @@ SUPPORTED_PYTHON_VERSIONS="3.11 3.12 3.13 3.14"
 # platform allow-list: an unsupported platform has no architecture to name.
 platform_architecture() {
   case "$1" in
-    aarch64-manylinux2014) printf 'arm64' ;;
-    x86_64-manylinux2014) printf 'x86_64' ;;
+    aarch64-manylinux2014 | aarch64-manylinux_2_28 | aarch64-manylinux_2_34) printf 'arm64' ;;
+    x86_64-manylinux2014 | x86_64-manylinux_2_28 | x86_64-manylinux_2_34) printf 'x86_64' ;;
     *) return 1 ;;
+  esac
+}
+
+# Whether a target Python version's Lambda runtime can load wheels built for a
+# platform. 3.11 is the one runtime on Amazon Linux 2, whose glibc 2.26 is too
+# old for manylinux_2_28 and manylinux_2_34 wheels. 3.12 and later run on
+# Amazon Linux 2023, glibc 2.34, which loads all of them. A package built for
+# the wrong pair still deploys, and only fails when the function imports it.
+platform_supports_python() {
+  case "$1:$2" in
+    *-manylinux_2_28:3.11 | *-manylinux_2_34:3.11) return 1 ;;
+    *) return 0 ;;
   esac
 }
 
@@ -128,7 +140,10 @@ Usage: ${0##*/} --input <dir> --output <dir> --python <version> --platform <plat
   --python     Python version to build against, one of:
                $SUPPORTED_PYTHON_VERSIONS
   --platform   uv target platform, one of: aarch64-manylinux2014,
-               x86_64-manylinux2014
+               x86_64-manylinux2014, aarch64-manylinux_2_28,
+               x86_64-manylinux_2_28, aarch64-manylinux_2_34,
+               x86_64-manylinux_2_34. The manylinux_2_28 and
+               manylinux_2_34 ones need --python 3.12 or later.
   --build-dir  scratch directory for intermediates, which build.sh takes over
                completely: it is deleted, not emptied, before and after every
                build. Never point it at a directory holding anything you want
@@ -242,11 +257,17 @@ main() {
 
   local architecture
   architecture="$(platform_architecture "$PLATFORM")" ||
-    fail "unsupported platform: $PLATFORM. Expected aarch64-manylinux2014 or x86_64-manylinux2014."
+    fail "unsupported platform: $PLATFORM. Expected one of: aarch64-manylinux2014," \
+      "x86_64-manylinux2014, aarch64-manylinux_2_28, x86_64-manylinux_2_28," \
+      "aarch64-manylinux_2_34, x86_64-manylinux_2_34."
 
   local runtime
   runtime="$(python_version_runtime "$PYTHON_VERSION")" ||
     fail "unsupported python-version: $PYTHON_VERSION. Expected one of: $SUPPORTED_PYTHON_VERSIONS."
+
+  platform_supports_python "$PLATFORM" "$PYTHON_VERSION" ||
+    fail "$runtime runs on Amazon Linux 2 (glibc 2.26), which cannot load manylinux_2_28 or" \
+      "manylinux_2_34 wheels. Use ${PLATFORM%%-*}-manylinux2014, or python-version 3.12 or later."
 
   local deprecation_date
   if deprecation_date="$(python_version_deprecation_date "$PYTHON_VERSION")"; then
